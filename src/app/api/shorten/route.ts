@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { redis } from '@/lib/redis'
 import { generateSlug, isValidUrl, hashUrl } from '@/lib/utils'
 import { Ratelimit } from '@upstash/ratelimit'
+import { auth } from '@/auth'
 
 const ratelimit = new Ratelimit({
   redis,
@@ -63,7 +64,14 @@ export async function POST(req: NextRequest) {
     } else {
       await redis.set(`url:${slug}`, JSON.stringify(linkData))
     }
-
+// Save to user's link list if logged in
+const session = await auth()
+console.log('SESSION IN SHORTEN:', JSON.stringify(session?.user))
+if (session?.user) {
+  const userId = session.user.id || session.user.email || ''
+  console.log('SAVING TO USER:', userId, 'SLUG:', slug)
+  await redis.sadd(`user:${userId}:links`, slug)
+}
     // Store hash for deduplication
     if (!burnAfterRead) {
       const urlHash = hashUrl(url)
