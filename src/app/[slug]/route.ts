@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { redis } from '@/lib/redis'
 
-const RESERVED_PATHS = ['login', 'dashboard', 'api', 'favicon.ico']
-
 interface LinkData {
   url: string
   createdAt: number
@@ -16,12 +14,6 @@ export async function GET(
 ) {
   try {
     const { slug } = await params
-
-    // Skip reserved paths — redirect to home
-    if (RESERVED_PATHS.includes(slug)) {
-      return NextResponse.redirect(new URL('/', req.url))
-    }
-
     const raw = await redis.get<string>(`url:${slug}`)
 
     if (!raw) {
