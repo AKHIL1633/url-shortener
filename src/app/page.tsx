@@ -90,7 +90,9 @@ export default function Home() {
           <div className="mb-4">
             <label className="text-white text-sm font-medium mb-1 block">Custom Alias (optional)</label>
             <div className="flex items-center bg-white/10 border border-white/20 rounded-xl px-4 py-3">
-              <span className="text-purple-300 text-sm mr-1">localhost:3000/</span>
+              <span className="text-purple-300 text-sm mr-1">
+                {process.env.NEXT_PUBLIC_BASE_URL?.replace('https://', '').replace('http://localhost:3000', 'localhost:3000')}/
+              </span>
               <input
                 type="text"
                 value={customAlias}
