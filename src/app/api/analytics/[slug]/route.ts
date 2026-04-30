@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { redis } from '@/lib/redis'
+import { prisma } from '@/lib/db'
 
 export async function GET(
   req: NextRequest,
@@ -20,11 +21,27 @@ export async function GET(
       typeof entry === 'string' ? JSON.parse(entry) : entry
     )
 
-    // Count by country
     const byCountry: Record<string, number> = {}
     clicks.forEach((click: { country: string; city: string; timestamp: number }) => {
       byCountry[click.country] = (byCountry[click.country] || 0) + 1
     })
+
+    // Also get data from PostgreSQL
+    let pgClicks = null
+    try {
+      const link = await prisma.link.findUnique({
+        where: { slug },
+        include: {
+          clickEvents: {
+            orderBy: { createdAt: 'desc' },
+            take: 100,
+          },
+        },
+      })
+      if (link) pgClicks = link.clickEvents
+    } catch (e) {
+      console.error('PG error:', e)
+    }
 
     return NextResponse.json({
       slug,
@@ -33,6 +50,7 @@ export async function GET(
       createdAt: linkData.createdAt,
       recentClicks: clicks.slice(0, 10),
       byCountry,
+      pgClicks: pgClicks || [],
     })
   } catch (error) {
     console.error(error)

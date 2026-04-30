@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { redis } from '@/lib/redis'
+import { prisma } from '@/lib/db'
 import { generateSlug, isValidUrl, hashUrl } from '@/lib/utils'
 import { Ratelimit } from '@upstash/ratelimit'
 import { auth } from '@/auth'
@@ -11,7 +12,6 @@ const ratelimit = new Ratelimit({
 
 export async function POST(req: NextRequest) {
   try {
-    // Rate limiting
     const ip = req.headers.get('x-forwarded-for') ?? 'anonymous'
     const { success } = await ratelimit.limit(ip)
     if (!success) {
@@ -21,12 +21,13 @@ export async function POST(req: NextRequest) {
     const body = await req.json()
     const { url, customAlias, expiresIn, burnAfterRead } = body
 
-    // Validate URL
     if (!url || !isValidUrl(url)) {
       return NextResponse.json({ error: 'Invalid URL' }, { status: 400 })
     }
 
-    // Smart deduplication — O(1) lookup
+    const session = await auth()
+
+    // Smart deduplication
     if (!customAlias && !burnAfterRead) {
       const urlHash = hashUrl(url)
       const existingSlug = await redis.get<string>(`hash:${urlHash}`)
@@ -39,10 +40,8 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Use custom alias or generate one
     const slug = customAlias || generateSlug()
 
-    // Check if custom alias already taken
     if (customAlias) {
       const existing = await redis.get(`url:${slug}`)
       if (existing) {
@@ -50,7 +49,10 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Build link data
+    const expiresAt = expiresIn
+      ? new Date(Date.now() + expiresIn * 1000)
+      : null
+
     const linkData = {
       url,
       createdAt: Date.now(),
@@ -58,21 +60,14 @@ export async function POST(req: NextRequest) {
       burnAfterRead: burnAfterRead || false,
     }
 
-    // Store with optional expiration (TTL)
+    // Save to Redis
     if (expiresIn) {
       await redis.set(`url:${slug}`, JSON.stringify(linkData), { ex: expiresIn })
     } else {
       await redis.set(`url:${slug}`, JSON.stringify(linkData))
     }
-// Save to user's link list if logged in
-const session = await auth()
-console.log('SESSION IN SHORTEN:', JSON.stringify(session?.user))
-if (session?.user) {
-  const userId = session.user.id || session.user.email || ''
-  console.log('SAVING TO USER:', userId, 'SLUG:', slug)
-  await redis.sadd(`user:${userId}:links`, slug)
-}
-    // Store hash for deduplication
+
+    // Save hash for deduplication
     if (!burnAfterRead) {
       const urlHash = hashUrl(url)
       if (expiresIn) {
@@ -80,6 +75,47 @@ if (session?.user) {
       } else {
         await redis.set(`hash:${urlHash}`, slug)
       }
+    }
+
+    // Save to PostgreSQL if logged in
+    if (session?.user) {
+      const userId = session.user.id || session.user.email || ''
+
+      // Upsert user in PostgreSQL
+      await prisma.user.upsert({
+        where: { githubId: userId },
+        update: {
+          name: session.user.name || '',
+          avatar: session.user.image || '',
+          email: session.user.email || '',
+        },
+        create: {
+          githubId: userId,
+          name: session.user.name || '',
+          avatar: session.user.image || '',
+          email: session.user.email || '',
+        },
+      })
+
+      const user = await prisma.user.findUnique({
+        where: { githubId: userId },
+      })
+
+      if (user) {
+        // Save link to PostgreSQL
+        await prisma.link.create({
+          data: {
+            slug,
+            originalUrl: url,
+            userId: user.id,
+            burnAfterRead: burnAfterRead || false,
+            expiresAt,
+          },
+        })
+      }
+
+      // Save to Redis user set
+      await redis.sadd(`user:${userId}:links`, slug)
     }
 
     return NextResponse.json({
