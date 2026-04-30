@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { redis } from '@/lib/redis'
 
+const RESERVED_PATHS = ['login', 'dashboard', 'api', 'favicon.ico']
+
 interface LinkData {
   url: string
   createdAt: number
@@ -14,10 +16,16 @@ export async function GET(
 ) {
   try {
     const { slug } = await params
+
+    // Skip reserved paths
+    if (RESERVED_PATHS.includes(slug)) {
+      return NextResponse.next()
+    }
+
     const raw = await redis.get<string>(`url:${slug}`)
 
     if (!raw) {
-      return NextResponse.json({ error: 'Link not found or expired' }, { status: 404 })
+      return NextResponse.redirect(new URL('/', req.url))
     }
 
     const linkData: LinkData = typeof raw === 'string' ? JSON.parse(raw) : raw
@@ -43,6 +51,6 @@ export async function GET(
     return NextResponse.redirect(linkData.url, { status: 302 })
   } catch (error) {
     console.error(error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    return NextResponse.redirect(new URL('/', req.url))
   }
 }
