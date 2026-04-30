@@ -17,9 +17,9 @@ export async function GET(
   try {
     const { slug } = await params
 
-    // Skip reserved paths
+    // Skip reserved paths — redirect to home
     if (RESERVED_PATHS.includes(slug)) {
-      return NextResponse.next()
+      return NextResponse.redirect(new URL('/', req.url))
     }
 
     const raw = await redis.get<string>(`url:${slug}`)
